@@ -1,0 +1,59 @@
+Train/test split: 60/40 (7506 train, 5005 test)
+
+Test-set accuracy: 31.0%
+
+Per-class report:
+                    precision    recall  f1-score   support
+
+           calling       0.23      0.10      0.14       336
+          clapping       0.15      0.05      0.07       332
+           cycling       0.31      0.38      0.34       326
+           dancing       0.25      0.21      0.23       332
+          drinking       0.47      0.13      0.21       336
+            eating       0.47      0.32      0.38       336
+          fighting       0.26      0.19      0.22       333
+           hugging       0.09      0.03      0.05       336
+          laughing       0.17      0.82      0.29       336
+listening_to_music       0.15      0.05      0.07       335
+           running       0.37      0.46      0.41       333
+           sitting       0.37      0.45      0.41       336
+          sleeping       0.53      0.58      0.55       329
+           texting       0.46      0.26      0.33       335
+      using_laptop       0.62      0.62      0.62       334
+
+          accuracy                           0.31      5005
+         macro avg       0.33      0.31      0.29      5005
+      weighted avg       0.33      0.31      0.29      5005
+
+Confusion matrix (rows = actual, columns = predicted):
+                    calling  clapping  cycling  dancing  drinking  eating  fighting  hugging  laughing  listening_to_music  running  sitting  sleeping  texting  using_laptop
+calling                  35        10        7       12         5       7         6       16       143                  12       18       20        11       14            20
+clapping                 17        15        4       11        11      18         5       11       173                   8       10       25         2       13             9
+cycling                   6         3      124       38         0       2        40        4         3                   1       73       21         5        2             4
+dancing                   2         7       63       71         3       6        38        6        24                   6       69       20        10        5             2
+drinking                  6         2        0        3        45      21         5        4       206                   6        0        7        22        6             3
+eating                   13         5        4        7        14     106         2       10       118                   4        5       23         5        9            11
+fighting                  6         4       71       50         1       3        64       10        25                   6       54       16        15        6             2
+hugging                  15        11        9        5         6       8        16       11       180                   4        4       25        30        7             5
+laughing                  1         2        2        6         1       3         4        4       275                   5        2        8        13        6             4
+listening_to_music       18         7        6        4         3       5         7       14       169                  16        8       25        16       19            18
+running                   2         4       64       44         0       4        37        3        12                   3      154        4         0        2             0
+sitting                   7         9       17       15         4      14        11       16        40                   6       10      151         9        4            23
+sleeping                  5         2       10        8         0       3         5        4        62                   2        2       10       190        4            22
+texting                  12        12       11        2         2      19         1        5       108                  22        4       27        18       86             6
+using_laptop             10         6        6        3         1       6         6        2        37                   5        3       25        14        3           207
+
+Feature importances:
+  torso_tilt: 0.328
+  right_thigh_angle: 0.121
+  left_thigh_angle: 0.121
+  right_knee_angle: 0.094
+  left_knee_angle: 0.093
+  wrist_dist_laptop_related: 0.042
+  head_above_shoulders: 0.039
+  face_dist_laptop_related: 0.032
+  face_dist_drink_related: 0.031
+  wrist_dist_drink_related: 0.028
+  wrist_dist_phone_related: 0.026
+  face_dist_phone_related: 0.024
+  hip_dist_chair_related: 0.021

@@ -1,50 +1,10 @@
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-
-# Virtual environments
+# Virtual environment
 venv/
-.venv/
 env/
+.venv/
+__pycache__/
+*.pyc
 
-# ML model weights / generated models
-*.pt
-*.pth
-*.onnx
-*.engine
-*.joblib
-
-# Generated datasets / features
-*.csv
-*.parquet
-*.npy
-*.npz
-
-# Local datasets
-data/*
-!data/.gitkeep
-
-# Generated outputs
-outputs/*
-!outputs/.gitkeep
-
-# IDE
-.vscode/
-.idea/
-
-# Jupyter
-.ipynb_checkpoints/
-
-# OS
+# Environment/secrets
+.env
 .DS_Store
-Thumbs.db
-
-# Logs
-*.log
-
-# Temporary / backup files
-*.backup
-*.bak
-*~
