@@ -23,11 +23,7 @@ models/*.joblib
 weights/
 *.pt
 
-# ── Generated outputs (CSVs, reports, videos) ─────────
-outputs/*.csv
-outputs/*.mp4
-outputs/*.avi
-outputs/*.txt
+
 
 # ── Input media ────────────────────────────────────────
 input/

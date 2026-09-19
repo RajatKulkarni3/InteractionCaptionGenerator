@@ -1,0 +1,1 @@
+object_class,mean_wrist_dist,min_wrist_dist,max_wrist_near_sec,mean_face_dist,min_face_dist,max_face_near_sec,mean_shoulder_dist,min_shoulder_dist,mean_hip_dist,min_hip_dist,mean_knee_dist,min_knee_dist,obj_width_norm,obj_height_norm,openable,cuttable,pourable,containable,supportable,holdable
