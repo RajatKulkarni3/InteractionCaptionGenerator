@@ -1,12 +1,12 @@
 """
 POSE ESTIMATION MODULE — Human Action Recognition Internship
 ================================================================
-Scope: pose estimation + posture classification ONLY.
-Object detection / human-object-interaction is a separate teammate's
-component, to be integrated downstream later. This file has zero
-dependency on any object detector.
+Scope: pose estimation + posture classification + structured keypoint
+output for the interaction engine.
 
 MODEL: YOLO11-Pose (Ultralytics), pretrained on COCO.
+Weights are loaded exclusively from ``models/yolo11n-pose.pt`` (relative
+to the project root). A clear FileNotFoundError is raised if absent.
   Academic lineage: Maji, D., Nagori, S., Mathew, M., Poddar, D.
   "YOLO-Pose: Enhancing YOLO for Multi-Person Pose Estimation Using
   Object Keypoint Similarity Loss." CVPR Workshops, 2022. arXiv:2204.06806.
@@ -134,11 +134,48 @@ import argparse
 import math
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import cv2
 import numpy as np
 from ultralytics import YOLO
+
+# ---------------------------------------------------------------------------
+# Module-level YOLO11-Pose singleton
+# ---------------------------------------------------------------------------
+_HERE = Path(__file__).resolve().parent
+_PROJECT_ROOT = _HERE.parent
+_POSE_MODEL_PATH = _PROJECT_ROOT / "models" / "yolo11n-pose.pt"
+
+if not _POSE_MODEL_PATH.exists():
+    raise FileNotFoundError(
+        f"YOLO11-Pose weights not found at '{_POSE_MODEL_PATH}'.\n"
+        "Place yolo11n-pose.pt in the models/ directory before running."
+    )
+
+_POSE_MODEL: YOLO = YOLO(str(_POSE_MODEL_PATH))
+
+# Human-readable names for all 17 COCO keypoints (index -> name)
+_KP_NAMES: list[str] = [
+    "nose",          # 0
+    "left_eye",      # 1
+    "right_eye",     # 2
+    "left_ear",      # 3
+    "right_ear",     # 4
+    "left_shoulder", # 5
+    "right_shoulder",# 6
+    "left_elbow",    # 7
+    "right_elbow",   # 8
+    "left_wrist",    # 9
+    "right_wrist",   # 10
+    "left_hip",      # 11
+    "right_hip",     # 12
+    "left_knee",     # 13
+    "right_knee",    # 14
+    "left_ankle",    # 15
+    "right_ankle",   # 16
+]
 
 # ---------------------------------------------------------------------
 # COCO 17-keypoint indices (YOLO-Pose output format)
@@ -483,7 +520,17 @@ class PostureClassifier:
                 return "crouching"
             return "sitting"
 
-        return None  # between thresholds -- not enough to commit, let caller fall back further
+        # Between thresholds -- pick whichever side it's numerically closer to
+        dist_to_standing = abs(avg_thigh - THIGH_STANDING_MAX_DEG)
+        dist_to_sitting = abs(avg_thigh - THIGH_SITTING_MIN_DEG)
+        if dist_to_standing <= dist_to_sitting:
+            if torso_tilt is not None and torso_tilt >= CROUCH_TORSO_MIN_DEG:
+                return "crouching"
+            return "standing"
+        
+        if torso_tilt is not None and torso_tilt >= CROUCH_TORSO_MIN_DEG:
+            return "crouching"
+        return "sitting"
 
     @staticmethod
     def _fallback_no_legs(pose: PersonPose) -> str:
@@ -510,7 +557,11 @@ class PostureClassifier:
         common real case when this little is visible.
         """
         upright = _head_above_shoulders(pose)
+        aspect_ratio = pose.bbox_height / max(pose.bbox_width, 1.0)
+        
         if upright is True:
+            if aspect_ratio >= 1.7:
+                return "standing"
             return "sitting"
         if upright is False:
             return "lying down"
@@ -519,6 +570,8 @@ class PostureClassifier:
         # usable at all -- fall back to the old, cruder box-shape check.
         if pose.bbox_width > 1.3 * pose.bbox_height:
             return "lying down"
+        if aspect_ratio >= 1.7:
+            return "standing"
         return "sitting"
 
     def classify_frame(self, pose: PersonPose) -> str:
@@ -711,6 +764,77 @@ def pose_result_to_person(pose_result) -> Optional[PersonPose]:
     return PersonPose(keypoints=keypoints, bbox_height=bbox_height, bbox_width=bbox_width)
 
 
+# ---------------------------------------------------------------------------
+# Public entry point for the interaction engine
+# ---------------------------------------------------------------------------
+
+def estimate_pose(frame) -> dict:
+    """
+    Run YOLO11-Pose on *frame* and return a structured dict suitable for
+    direct consumption by the interaction engine and ``main.py``.
+
+    Keypoints with confidence < ``MIN_KEYPOINT_CONF`` (0.5) are excluded from
+    the ``"keypoints"`` dict entirely — the caller never sees low-confidence
+    positions.  The full ``PersonPose`` is still returned in
+    ``"person_pose"`` so ``PostureClassifier`` continues to work unchanged
+    (it applies its own per-function confidence guards internally).
+
+    Returns
+    -------
+    dict with keys:
+
+    ``"keypoints"``
+        ``dict[str, tuple[float, float]]`` — name → (x, y) pixel coords for
+        every keypoint that passed the 0.5 confidence filter.  Names are the
+        17 COCO strings: ``"nose"``, ``"left_wrist"``, ``"right_wrist"``,
+        ``"left_eye"``, etc.
+
+    ``"bbox"``
+        ``[x1, y1, x2, y2]`` of the tracked person, or ``None`` if nobody
+        was detected.
+
+    ``"confidence"``
+        Per-detection confidence score from the pose model's box head (0-1),
+        or ``0.0`` if nobody was detected.
+
+    ``"person_pose"``
+        The ``PersonPose`` dataclass instance (or ``None``), kept for
+        ``PostureClassifier.classify_smoothed()`` compatibility.
+
+    ``"raw_result"``
+        The raw ``ultralytics.engine.results.Results`` object.
+    """
+    results = _POSE_MODEL(frame, verbose=False)
+    result = results[0]
+
+    person = pose_result_to_person(result)
+    bbox = pose_result_to_bbox(result)
+
+    # Per-detection confidence: the box-level score for the chosen person
+    det_confidence = 0.0
+    if result.boxes is not None and len(result.boxes) > 0:
+        boxes = result.boxes.xyxy.cpu().numpy()
+        areas = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+        best_idx = int(areas.argmax())
+        det_confidence = float(result.boxes.conf[best_idx].cpu())
+
+    # Build named keypoint map, enforcing the 0.5 confidence threshold
+    named_keypoints: dict[str, tuple[float, float]] = {}
+    if person is not None:
+        for idx, name in enumerate(_KP_NAMES):
+            kp = person.keypoints[idx]
+            if kp is not None and kp.confidence >= MIN_KEYPOINT_CONF:
+                named_keypoints[name] = (kp.x, kp.y)
+
+    return {
+        "keypoints":   named_keypoints,
+        "bbox":        bbox,
+        "confidence":  det_confidence,
+        "person_pose": person,
+        "raw_result":  result,
+    }
+
+
 # ---------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------
@@ -726,7 +850,7 @@ def main():
     source = int(args.source) if args.source.lstrip("-").isdigit() else args.source
 
     print("Loading YOLO11-Pose model...")
-    pose_model = YOLO("yolo11n-pose.pt")
+    pose_model = _POSE_MODEL  # reuse the module singleton — no second load
 
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():

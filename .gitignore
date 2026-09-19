@@ -1,10 +1,56 @@
-# Virtual environment
+# ── Python ──────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ── Virtual environments ───────────────────────────────
 venv/
 env/
 .venv/
-__pycache__/
-*.pyc
-
-# Environment/secrets
 .env
+
+# ── Datasets (large / not ours to redistribute) ───────
+Dataset/
+data/
+
+# ── Model weights (download separately — see README) ──
+models/*.pt
+models/*.joblib
+weights/
+*.pt
+
+# ── Generated outputs (CSVs, reports, videos) ─────────
+outputs/*.csv
+outputs/*.mp4
+outputs/*.avi
+outputs/*.txt
+
+# ── Input media ────────────────────────────────────────
+input/
+
+# ── Videos ─────────────────────────────────────────────
+*.mp4
+*.avi
+*.mkv
+*.mov
+*.wmv
+*.flv
+
+# ── IDE & editor ───────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS generated ───────────────────────────────────────
 .DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Misc stray files ──────────────────────────────────
+500 cleanly separates no

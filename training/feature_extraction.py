@@ -44,27 +44,28 @@ USAGE:
 import argparse
 import csv
 import math
+import os
 import sys
 from pathlib import Path
 
 import cv2
 
-# --- Reuse the SAME geometry code the live pipeline uses, so training
-# and inference are computing identical features. ---
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from pose_estimation_final import (  # noqa: E402
+# Add the project root (one level above training/) to sys.path so that
+# ``src.pose_estimation`` and ``src.object_detection`` are importable
+# regardless of the working directory the caller uses.
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from src.pose_estimation import (  # noqa: E402
+    _POSE_MODEL,
     pose_result_to_person,
     get_interaction_keypoints,
     get_face_point,
     knee_angle,
     thigh_angle_from_vertical,
     torso_angle_from_vertical,
+    _head_above_shoulders,
 )
-
-try:
-    from objectDetection import detect_objects  # noqa: E402
-except ImportError:
-    detect_objects = None  # allows --dry_run smoke testing without your objectDetection.py present
+from src.object_detection import detect_objects  # noqa: E402
 
 
 # Object classes relevant to each target action -- extend this as you
@@ -78,6 +79,14 @@ RELEVANT_OBJECT_CLASSES = {
     "laptop": "laptop_related",
     "chair": "chair_related",
     "book": "reading_related",
+    "baseball": "baseball_related",
+    "baseball bat": "baseball_bat_related",
+    "barbell": "barbell_related",
+    "bench": "bench_related",
+    "bowling ball": "bowling_ball_related",
+    "guitar": "guitar_related",
+    "jump rope": "jump_rope_related",
+    "tennis racket": "tennis_racket_related",
 }
 
 FAR_SENTINEL = 999.0  # "no such object detected nearby" -- large, but finite, so a tree/forest
@@ -91,6 +100,14 @@ FEATURE_COLUMNS = [
     "wrist_dist_phone_related", "face_dist_phone_related",
     "wrist_dist_laptop_related", "face_dist_laptop_related",
     "hip_dist_chair_related",
+    "wrist_dist_baseball_related",
+    "wrist_dist_baseball_bat_related",
+    "wrist_dist_barbell_related",
+    "wrist_dist_bench_related",
+    "wrist_dist_bowling_ball_related",
+    "wrist_dist_guitar_related",
+    "wrist_dist_jump_rope_related",
+    "wrist_dist_tennis_racket_related",
 ]
 
 
@@ -121,7 +138,6 @@ def extract_features(person, detections) -> dict:
     wrist_points = [(x, y) for x, y, kind in interaction_kps if kind == "wrist"]
     hip_points = [(x, y) for x, y, kind in interaction_kps if kind == "hip"]
     face_point = get_face_point(person)
-    from pose_estimation_final import _head_above_shoulders
     hu = _head_above_shoulders(person)
     feats["head_above_shoulders"] = {True: 1.0, False: 0.0, None: -1.0}[hu]
 
@@ -169,14 +185,12 @@ def main():
 
     if detect_objects is None:
         raise RuntimeError(
-            "objectDetection.py (with a detect_objects function) was not importable. "
-            "Run this from your project folder (next to objectDetection.py), or add it "
-            "to PYTHONPATH."
+            "src.object_detection could not be imported. "
+            "Run from the project root or ensure src/ is on PYTHONPATH."
         )
 
-    from ultralytics import YOLO
-    print("Loading YOLO11-Pose model...")
-    pose_model = YOLO("yolo11n-pose.pt")
+    pose_model = _POSE_MODEL  # reuse the module singleton — no second model load
+    print("Pose model ready (loaded via src.pose_estimation singleton).")
 
     dataset_root = Path(args.dataset_root)
     class_dirs = sorted(p for p in dataset_root.iterdir() if p.is_dir())
@@ -211,7 +225,7 @@ def main():
                     skipped_no_person += 1
                     continue
 
-                detections = detect_objects(frame, imgsz=args.imgsz)
+                detections = detect_objects(frame, imgsz=args.imgsz)["detections"]
                 feats = extract_features(person, detections)
 
                 writer.writerow([str(img_path), label] + [feats[c] for c in FEATURE_COLUMNS])

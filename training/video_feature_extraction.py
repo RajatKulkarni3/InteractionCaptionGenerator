@@ -46,20 +46,22 @@ USAGE:
 
 import argparse
 import csv
+import os
 import sys
 from pathlib import Path
 
-import cv2
+import cv2  # type: ignore (if IDE is caching)
+import scipy.io  # type: ignore (if IDE is caching)
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from pose_estimation_final import (  # noqa: E402
+# Add the project root to sys.path so src.pose_estimation and
+# src.object_detection are importable from the training/ directory.
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from src.pose_estimation import (  # noqa: E402
+    _POSE_MODEL,
     pose_result_to_person,
 )
-
-try:
-    from objectDetection import detect_objects  # noqa: E402
-except ImportError:
-    detect_objects = None
+from src.object_detection import detect_objects, set_classes, _DEFAULT_CLASSES  # noqa: E402
 
 # Reuse the exact per-frame feature function + column list + object
 # category map from the image-based script, so train/eval features
@@ -189,7 +191,7 @@ def process_video(video_path: Path, pose_model, imgsz: int, sample_fps: float):
         detections = detect_objects(
             frame,
             imgsz=imgsz
-        )
+        )["detections"]
 
         feats = extract_features(
             person,
@@ -224,8 +226,10 @@ def process_video(video_path: Path, pose_model, imgsz: int, sample_fps: float):
 def main():
     parser = argparse.ArgumentParser(description="Extract duration-aware features from a labeled video dataset")
     parser.add_argument("--dataset_root", type=str, required=True,
-                         help="Folder containing one subfolder per class, each full of video clips")
-    parser.add_argument("--out", type=str, default="video_features.csv")
+                         help="Folder containing Penn Action Dataset (with /frames and /labels)")
+    parser.add_argument("--out", type=str,
+                         default=str(Path(__file__).resolve().parent.parent / "outputs" / "penn_video_features.csv"),
+                         help="Output CSV path (default: outputs/penn_video_features.csv in project root)")
     parser.add_argument("--imgsz", type=int, default=320)
     parser.add_argument("--sample_fps", type=float, default=5.0,
                          help="How many frames per second of video to actually process")
@@ -235,19 +239,31 @@ def main():
 
     if detect_objects is None:
         raise RuntimeError(
-            "objectDetection.py (with a detect_objects function) was not importable. "
-            "Run this from your project's training/ folder with objectDetection.py "
-            "next to pose_estimation_final.py one level up."
+            "src.object_detection could not be imported. "
+            "Run from the project root or ensure src/ is on PYTHONPATH."
         )
 
-    from ultralytics import YOLO
-    print("Loading YOLO11-Pose model...")
-    pose_model = YOLO("yolo11n-pose.pt")
+    pose_model = _POSE_MODEL  # reuse the module singleton — no second model load
+    print("Pose model ready (loaded via src.pose_estimation singleton).")
+
+    # Setup YOLO-World classes for Penn Action
+    penn_classes = ["baseball", "baseball bat", "barbell", "bench", "bowling ball", "guitar", "jump rope", "tennis racket"]
+    set_classes(_DEFAULT_CLASSES + penn_classes)
+    print("YOLO-World ready with Penn Action vocabulary.")
 
     dataset_root = Path(args.dataset_root)
-    class_dirs = sorted(p for p in dataset_root.iterdir() if p.is_dir())
-    if not class_dirs:
-        raise RuntimeError(f"No class subfolders found under {dataset_root}")
+    labels_dir = dataset_root / "labels"
+    frames_dir = dataset_root / "frames"
+    
+    if not labels_dir.exists() or not frames_dir.exists():
+        raise RuntimeError(f"Expected 'labels' and 'frames' subdirectories in {dataset_root}")
+
+    mat_files = sorted(labels_dir.glob("*.mat"))
+    if not mat_files:
+        raise RuntimeError(f"No .mat files found in {labels_dir}")
+        
+    if args.limit_per_class:
+        mat_files = mat_files[: args.limit_per_class]
 
     rows_written = 0
     skipped_no_detection = 0
@@ -256,23 +272,28 @@ def main():
         writer = csv.writer(f)
         writer.writerow(["image_path", "label"] + AGG_COLUMNS)
 
-        for class_dir in class_dirs:
-            label = class_dir.name
-            video_paths = sorted(
-                p for p in class_dir.iterdir()
-                if p.is_dir() and any(p.glob("*.jpg"))
-            )
-            if args.limit_per_class:
-                video_paths = video_paths[: args.limit_per_class]
+        for mat_path in mat_files:
+            video_id = mat_path.stem
+            video_path = frames_dir / video_id
+            
+            if not video_path.is_dir() or not any(video_path.glob("*.jpg")):
+                print(f"Skipping {video_id}: No frames found.")
+                continue
+                
+            try:
+                mat = scipy.io.loadmat(str(mat_path))
+                label = str(mat['action'][0])
+            except Exception as e:
+                print(f"Skipping {video_id}: Error reading label ({e})")
+                continue
 
-            print(f"[{label}] {len(video_paths)} videos")
-            for video_path in video_paths:
-                row = process_video(video_path, pose_model, args.imgsz, args.sample_fps)
-                if row is None:
-                    skipped_no_detection += 1
-                    continue
-                writer.writerow([str(video_path), label] + [row[c] for c in AGG_COLUMNS])
-                rows_written += 1
+            row = process_video(video_path, pose_model, args.imgsz, args.sample_fps)
+            if row is None:
+                skipped_no_detection += 1
+                continue
+            writer.writerow([str(video_path), label] + [row[c] for c in AGG_COLUMNS])
+            rows_written += 1
+            print(f"Processed {video_id} -> {label}")
 
     print(f"\nWrote {rows_written} rows to {args.out}")
     print(f"Skipped {skipped_no_detection} videos with no usable person detection in any sampled frame")
