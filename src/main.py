@@ -85,6 +85,27 @@ from feature_extraction import (                                          # noqa
     RELEVANT_OBJECT_CLASSES,
     FAR_SENTINEL,
 )
+from interaction_engine import (                                          # noqa: E402
+    DRINK_OBJECT_CLASSES, PHONE_OBJECT_CLASSES,
+    LAPTOP_OBJECT_CLASSES, READING_OBJECT_CLASSES,
+)
+
+# Classes that already have a dedicated, class-specific rule detector in
+# interaction_engine.py (drinking / using phone / using laptop / reading).
+# The CAD affordance RF model was trained with a broken object_class feature
+# (see training/cad_feature_extraction.py — every training row got
+# object_class="unknown", so the model never learned to distinguish object
+# identity and instead guesses affordances from hand/face geometry alone).
+# That makes it unreliable specifically for telling "cup near mouth" apart
+# from "phone near face" — both look the same to it, which is why a phone
+# could get labeled "Pouring". Until the CAD model is retrained with real
+# object-class labels, we don't let its affordance guess run — or override
+# the caption — for any class that already has a trustworthy rule-based
+# detector.
+_RULE_COVERED_CLASSES = (
+    DRINK_OBJECT_CLASSES | PHONE_OBJECT_CLASSES
+    | LAPTOP_OBJECT_CLASSES | READING_OBJECT_CLASSES
+)
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +137,13 @@ OUTPUT_FILE = args.output
 INFERENCE_IMGSZ               = 640
 OBJECT_DETECTION_EVERY_N_FRAMES = 2
 DEBUG_EVERY_N_FRAMES          = 30
+
+# Was 0.15 — far too permissive for open-vocabulary YOLO-World: it let
+# low-confidence background clutter (misclassified shadows, edges of
+# unrelated objects, etc.) through into tracking and the interaction/
+# affordance pipeline, which is the main source of spurious detections.
+# 0.35–0.45 is a reasonable starting point; tune per-camera/lighting.
+OBJECT_CONF_THRESHOLD          = 0.40
 
 # Rolling feature buffer for the RF classifier
 # -------------------------------------------------
@@ -543,6 +571,11 @@ if OUTPUT_FILE:
 frame_id        = 0
 last_detections : list[dict] = []
 last_objects    : list[dict] = []
+# Fixes a NameError on the first person-containing frame: the affordance
+# step below reads proximity_log before this frame's interaction_engine
+# call produces one. Seeding it empty means the first frame's affordance
+# features just fall back to "no duration evidence yet" instead of crashing.
+proximity_log   : list = []
 
 
 # ---------------------------------------------------------------------------
@@ -580,7 +613,7 @@ try:
         # ------------------------------------------------------------
 
         if frame_id % OBJECT_DETECTION_EVERY_N_FRAMES == 0:
-            det_result      = detect_objects(frame, conf_threshold=0.15,
+            det_result      = detect_objects(frame, conf_threshold=OBJECT_CONF_THRESHOLD,
                                              imgsz=INFERENCE_IMGSZ)
             last_detections = det_result["detections"]
             _, last_objects = split_persons_and_objects(last_detections)
@@ -604,6 +637,10 @@ try:
             # To fix this chicken and egg, we'll let interaction_engine's internal tracker be updated here:
             tracks = interaction_engine.tracker.update(objects)
             for track in tracks:
+                # Skip classes already owned by a dedicated rule detector —
+                # see _RULE_COVERED_CLASSES above for why.
+                if track.cls in _RULE_COVERED_CLASSES:
+                    continue
                 affs = _predict_track_affordances(person, track, proximity_log, frame.shape)
                 if affs:
                     track_affordances[track.track_id] = affs

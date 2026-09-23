@@ -633,6 +633,17 @@ def detect_affordance_based_action(
     bbox_height: float,
     now: float,
 ) -> Optional[InteractionEvent]:
+    # Defense-in-depth: the CAD affordance model's object_class feature was
+    # trained with every row labeled "unknown" (see
+    # training/cad_feature_extraction.py), so it cannot reliably tell object
+    # identities apart and should never override a class that already has a
+    # dedicated, tested rule detector (drinking/using phone/using laptop/
+    # reading). The caller (main.py) already avoids computing affordances
+    # for these classes; this check makes that guarantee hold even if
+    # predicted_affordances is populated by some other caller.
+    if track.cls in (DRINK_OBJECT_CLASSES | PHONE_OBJECT_CLASSES
+                      | LAPTOP_OBJECT_CLASSES | READING_OBJECT_CLASSES):
+        return None
     if not predicted_affordances or not wrist_points:
         return None
 
